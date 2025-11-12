@@ -10,7 +10,7 @@ NC='\033[0m'
 
 # 当前脚本路径及远程脚本 URL（用于更新）
 CURRENT_SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
-SCRIPT_URL="https://raw.githubusercontent.com/sillda76/nekou/refs/heads/main/nekou.sh"
+SCRIPT_URL="https://raw.githubusercontent.com/mikamoe/vpstools/refs/heads/main/tools.sh"
 
 # SSH美化内容（萌萌哒提示喵～(ฅ'ω'ฅ)）
 BEAUTIFY_CONTENT='
@@ -330,8 +330,8 @@ uninstall_script() {
 show_menu() {
     clear
     echo -e "${MAGENTA}========================================${NC}"
-    echo -e "${GREEN}Nekou.sh～(=^･ω･^=)${NC}"
-    echo -e "${BLUE}https://github.com/sillda76/nekou${NC}"
+    echo -e "${GREEN}tools.sh～(=^･ω･^=)${NC}"
+    echo -e "${BLUE}https://github.com/mikamoe/vpstools${NC}"
     echo -e "${MAGENTA}========================================${NC}"
     echo -e "${YELLOW}1. 优化 DNS 地址${NC}"
     echo -e "${CYAN}2. 系统更新${NC}"
@@ -356,9 +356,9 @@ while true; do
         1) set_dns_ui ;;
         2) system_update ;;
         3) system_clean ;;
-        4) bash <(curl -sL https://raw.githubusercontent.com/sillda76/nekou/refs/heads/main/install_fail2ban.sh) ;;
-        5) bash <(curl -sL https://raw.githubusercontent.com/sillda76/nekou/refs/heads/main/IPControlCenter.sh) ;;
-        6) bash <(curl -s https://raw.githubusercontent.com/sillda76/nekou/refs/heads/main/system_info.sh) ;;
+        4) bash <(curl -sL https://raw.githubusercontent.com/mikamoe/vpstools/refs/heads/main/install_fail2ban.sh) ;;
+        5) bash <(curl -sL https://raw.githubusercontent.com/mikamoe/vpstools/refs/heads/main/IPControlCenter.sh) ;;
+        6) bash <(curl -s https://raw.githubusercontent.com/mikamoe/vpstools/refs/heads/main/system_info.sh) ;;
         7) ssh_beautify ;;
         8)
             if ! command -v wget &>/dev/null; then
@@ -367,7 +367,7 @@ while true; do
             sudo bash -c "$(wget -qO- https://raw.githubusercontent.com/byJoey/Actions-bbr-v3/refs/heads/main/install.sh)"
             read -n1 -s -r -p "按任意键返回菜单喵～"
             ;;
-        9) bash <(wget -qO- https://raw.githubusercontent.com/sillda76/DanmakuRender/refs/heads/v5/dmr.sh) ;;
+        9) bash <(wget -qO- https://raw.githubusercontent.com/mikamoe/vpstools/refs/heads/v5/dmr.sh) ;;
         10) update_script ;;
         11) uninstall_script ;;
         0) echo -e "${MAGENTA}退出脚本${NC}" ; break ;;

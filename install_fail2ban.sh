@@ -1,27 +1,32 @@
 #!/usr/bin/env bash
-# install_fail2ban.sh - Debian/Ubuntu 交互脚本（最终版）
-# 功能：
-#  - 安装并配置 Fail2Ban（仅 SSH），ignoreip 包含 127.0.0.1/8 ::1
-#  - 使用明确的 ssh 日志路径（Debian/Ubuntu: /var/log/auth.log 或 /var/log/secure，若都不存在则回退为 %(sshd_log)s）
-#  - 每15天清空 fail2ban 日志（通过 root crontab）
-#  - 查看状态、配置、实时日志、查看/解封封禁 IP、卸载并清理 cron & 脚本
+# install_fail2ban.sh - Debian/Ubuntu 交互脚本（美化日志前缀，功能同原版）
 set -euo pipefail
 
-# 颜色变量（使用 \033 更稳健）
+# 颜色与样式
 RED="\033[31m"; GREEN="\033[32m"; YELLOW="\033[33m"
-BLUE="\033[34m"; CYAN="\033[36m"; BOLD="\033[1m"; RESET="\033[0m"
+BLUE="\033[34m"; CYAN="\033[36m"; BOLD="\033[1m"; NC="\033[0m"
 
-info(){ printf "${BLUE}[INFO]${RESET} %s\n" "$*"; }
-warn(){ printf "${YELLOW}[WARN]${RESET} %s\n" "$*"; }
-err(){ printf "${RED}[ERROR]${RESET} %s\n" "$*\n" >&2; exit 1; }
+# 日志前缀（采用用户提供的示例样式）
+LOG_INFO="${BLUE}${BOLD}[i]${NC} "
+LOG_SUCCESS="${GREEN}${BOLD}[✓]${NC} "
+LOG_WARN="${YELLOW}${BOLD}[!]${NC} "
+LOG_ERROR="${RED}${BOLD}[✗]${NC} "
 
+# 简洁日志函数
+log_info(){ printf "%b%s\n" "${LOG_INFO}" "$*"; }
+log_success(){ printf "%b%s\n" "${LOG_SUCCESS}" "$*"; }
+log_warn(){ printf "%b%s\n" "${LOG_WARN}" "$*"; }
+# log_error 输出到 stderr 并退出
+log_error(){ printf "%b%s\n" "${LOG_ERROR}" "$*" >&2; exit 1; }
+
+# 确保以 root 运行
 if [ "$EUID" -ne 0 ]; then
-  err "请以 root 或 sudo 运行：sudo bash $0"
+  log_error "请以 root 或 sudo 运行：sudo bash $0"
 fi
 
 # ---------- 可调项 ----------
 SSH_PORT=22
-BANTIME=600                     # 封禁时长（秒）
+BANTIME=600
 JAIL="sshd"
 JAIL_DIR="/etc/fail2ban/jail.d"
 JAIL_FILE="${JAIL_DIR}/sshd-ufw.local"
@@ -34,7 +39,7 @@ CRON_LINE="0 3 */15 * * ${CLEAR_SCRIPT} >/dev/null 2>&1"
 SEP="=============================="
 
 press_any(){
-  printf "\n${CYAN}按任意键继续...${RESET}"
+  printf "\n${CYAN}按任意键继续...${NC}"
   read -r -n1 -s
   printf "\n"
 }
@@ -43,14 +48,14 @@ is_installed(){ command -v "$1" >/dev/null 2>&1; }
 
 show_install_status(){
   if is_installed fail2ban-client || dpkg -s fail2ban >/dev/null 2>&1; then
-    printf "${BOLD}Fail2ban:${RESET} ${GREEN}已安装${RESET}    "
+    printf "${BOLD}Fail2ban:${NC} ${GREEN}已安装${NC}    "
   else
-    printf "${BOLD}Fail2ban:${RESET} ${RED}未安装${RESET}    "
+    printf "${BOLD}Fail2ban:${NC} ${RED}未安装${NC}    "
   fi
   if is_installed ufw || dpkg -s ufw >/dev/null 2>&1; then
-    printf "${BOLD}UFW:${RESET} ${GREEN}已安装${RESET}\n"
+    printf "${BOLD}UFW:${NC} ${GREEN}已安装${NC}\n"
   else
-    printf "${BOLD}UFW:${RESET} ${RED}未安装${RESET}\n"
+    printf "${BOLD}UFW:${NC} ${RED}未安装${NC}\n"
   fi
 }
 
@@ -71,20 +76,23 @@ ensure_crontab_available(){
     return 0
   fi
 
-  info "检测到系统缺少 crontab 命令，尝试安装 cron 包..."
+  log_info "检测到系统缺少 crontab 命令，尝试安装 cron 包..."
   apt-get update -y || true
-  apt-get install -y cron || { warn "尝试安装 cron 失败，请手动安装 cron 或 crontab"; return 1; }
-  # 启用并启动 cron 服务（若可用）
+  if ! apt-get install -y cron; then
+    log_warn "尝试安装 cron 失败，请手动安装 cron 或 crontab"
+    return 1
+  fi
+
   if systemctl list-unit-files | grep -q '^cron\.service'; then
-    systemctl enable --now cron || warn "启动/启用 cron 服务失败（但安装已完成）"
+    systemctl enable --now cron || log_warn "启动/启用 cron 服务失败（但安装已完成）"
   fi
 
   if command -v crontab >/dev/null 2>&1; then
-    info "crontab 命令已可用。"
+    log_info "crontab 命令已可用。"
     return 0
   fi
 
-  warn "安装 cron 后仍未找到 crontab 命令，后续将跳过添加 crontab 操作。"
+  log_warn "安装 cron 后仍未找到 crontab 命令，后续将跳过添加 crontab 操作。"
   return 1
 }
 
@@ -100,68 +108,65 @@ if [ -f "${LOG}" ]; then
 fi
 EOF
   chmod 755 "${CLEAR_SCRIPT}"
-  info "已创建 ${CLEAR_SCRIPT}（用于清空 ${FAIL2BAN_LOG}）"
+  log_info "已创建 ${CLEAR_SCRIPT}（用于清空 ${FAIL2BAN_LOG}）"
 
-  # 确保 crontab 可用，否则跳过添加
   if ! ensure_crontab_available; then
-    warn "crontab 不可用，已创建清空脚本但未添加定时任务。"
+    log_warn "crontab 不可用，已创建清空脚本但未添加定时任务。"
     return 0
   fi
 
   CRONTAB_CONTENT="$(crontab -l 2>/dev/null || true)"
   if printf "%s\n" "$CRONTAB_CONTENT" | grep -Fq "${CRON_MARK}"; then
-    info "crontab 中已存在定时清理任务，跳过添加。"
+    log_info "crontab 中已存在定时清理任务，跳过添加。"
   else
-    # 写入新的 crontab（保留原有内容）
     TMP_CRON="$(mktemp)"
     {
       printf "%s\n" "$CRONTAB_CONTENT"
       printf "%s\n" "${CRON_MARK}"
       printf "%s\n" "${CRON_LINE}"
     } > "${TMP_CRON}"
-    crontab "${TMP_CRON}" 2>/dev/null || warn "写入 crontab 失败（权限或格式问题）"
+    if crontab "${TMP_CRON}" 2>/dev/null; then
+      log_info "已将定时任务添加到 root 的 crontab：${CRON_LINE}"
+    else
+      log_warn "写入 crontab 失败（权限或格式问题）"
+    fi
     rm -f "${TMP_CRON}"
-    info "已将定时任务添加到 root 的 crontab：${CRON_LINE}"
   fi
 }
 
 install_fail2ban(){
-  info "开始安装流程：更新并安装 UFW 与 Fail2Ban"
+  log_info "开始安装流程：更新并安装 UFW 与 Fail2Ban"
   export DEBIAN_FRONTEND=noninteractive
 
-  info "apt-get update && apt-get upgrade -y"
+  log_info "apt-get update && apt-get upgrade -y"
   apt-get update -y
   apt-get upgrade -y
 
-  info "正在安装 UFW..."
+  log_info "正在安装 UFW..."
   apt-get install -y ufw
-  info "UFW 安装完成（或已存在）"
+  log_success "UFW 安装完成（或已存在）"
 
-  info "正在安装 Fail2Ban..."
+  log_info "正在安装 Fail2Ban..."
   apt-get install -y fail2ban
-  info "Fail2Ban 安装完成（或已存在）"
+  log_success "Fail2Ban 安装完成（或已存在）"
 
-  info "确保 UFW 允许 SSH ${SSH_PORT}/tcp（避免被锁死）"
-  ufw allow "${SSH_PORT}/tcp" || warn "ufw allow 返回非零（若 ufw 未启用这是正常的）"
+  log_info "确保 UFW 允许 SSH ${SSH_PORT}/tcp（避免被锁死）"
+  ufw allow "${SSH_PORT}/tcp" || log_warn "ufw allow 返回非零（若 ufw 未启用这是正常的）"
 
-  # —— 关键：设置 UFW 默认为允许所有传入（因为你要用 UFW 仅配合 fail2ban）
-  info "将 UFW 设置为允许所有传入连接（UFW 仅用于配合 Fail2Ban 封禁）"
-  ufw default allow incoming || warn "设置 ufw default allow incoming 返回非零"
+  log_info "将 UFW 设置为允许所有传入连接（UFW 仅用于配合 Fail2Ban 封禁）"
+  ufw default allow incoming || log_warn "设置 ufw default allow incoming 返回非零"
   ufw default allow outgoing || true
-
-  # 再次确认放行 SSH（冗余安全）
   ufw allow "${SSH_PORT}/tcp" || true
 
-  # 重启/启用 ufw
-  ufw --force enable || warn "启用 UFW 返回非零"
+  ufw --force enable || log_warn "启用 UFW 返回非零"
   if systemctl list-units --type=service --all | grep -q '^ufw\.service'; then
-    systemctl restart ufw || warn "重启 ufw 返回非零"
+    systemctl restart ufw || log_warn "重启 ufw 返回非零"
   fi
 
   SSH_LOGPATH="$(detect_ssh_logpath)"
-  info "使用 SSH 日志路径：${SSH_LOGPATH}"
+  log_info "使用 SSH 日志路径：${SSH_LOGPATH}"
 
-  info "写入 Fail2Ban 配置（覆盖）：${JAIL_FILE}"
+  log_info "写入 Fail2Ban 配置（覆盖）：${JAIL_FILE}"
   mkdir -p "${JAIL_DIR}"
   cat > "${JAIL_FILE}" <<EOF
 [${JAIL}]
@@ -176,72 +181,70 @@ bantime  = ${BANTIME}
 banaction = ufw
 EOF
   chmod 644 "${JAIL_FILE}"
-  info "配置已写入：${JAIL_FILE}"
+  log_success "配置已写入：${JAIL_FILE}"
 
-  info "重启 fail2ban 服务"
-  systemctl restart fail2ban || warn "重启 fail2ban 返回非零"
+  log_info "重启 fail2ban 服务"
+  systemctl restart fail2ban || log_warn "重启 fail2ban 返回非零"
 
-  # 添加定期清理任务
   setup_periodic_log_clear
 
-  echo -e "${SEP}"
-  info "安装与配置已完成，显示 fail2ban 服务状态前先展示配置文件内容："
+  printf "\n${SEP}\n"
+  log_info "安装与配置已完成，显示 fail2ban 服务状态前先展示配置文件内容："
 
-  # 新增：在显示服务状态前，显示配置文件内容供用户确认
   if [ -f "${JAIL_FILE}" ]; then
-    info "显示 ${JAIL_FILE} 的内容："
+    log_info "显示 ${JAIL_FILE} 的内容："
     sed -n '1,200p' "${JAIL_FILE}" || true
   else
-    warn "${JAIL_FILE} 未找到。显示 /etc/fail2ban 下的文件列表："
+    log_warn "${JAIL_FILE} 未找到。显示 /etc/fail2ban 下的文件列表："
     ls -la /etc/fail2ban || true
   fi
 
-  info "显示 fail2ban 服务状态："
+  log_info "显示 fail2ban 服务状态："
   systemctl status fail2ban --no-pager -l || true
-  echo -e "${SEP}"
+  printf "\n${SEP}\n"
 }
 
 show_status(){
-  echo -e "${SEP}"
-  info "fail2ban 服务状态："
+  printf "\n${SEP}\n"
+  log_info "fail2ban 服务状态："
   systemctl status fail2ban --no-pager -l || true
-  echo -e "${SEP}"
+  printf "\n${SEP}\n"
 }
 
 show_config(){
-  echo -e "${SEP}"
+  printf "\n${SEP}\n"
   if [ -f "${JAIL_FILE}" ]; then
-    info "显示 ${JAIL_FILE} 内容："
+    log_info "显示 ${JAIL_FILE} 内容："
     sed -n '1,200p' "${JAIL_FILE}" || true
   else
-    warn "${JAIL_FILE} 未找到。"
+    log_warn "${JAIL_FILE} 未找到。"
     if [ -d "/etc/fail2ban" ]; then
-      info "/etc/fail2ban 下的文件："
+      log_info "/etc/fail2ban 下的文件："
       ls -la /etc/fail2ban || true
     fi
   fi
-  echo -e "${SEP}"
+  printf "\n${SEP}\n"
 }
 
 show_logs(){
   if [ ! -f "${FAIL2BAN_LOG}" ]; then
-    warn "${FAIL2BAN_LOG} 不存在，检查 Fail2Ban 是否在写日志。"
+    log_warn "${FAIL2BAN_LOG} 不存在，检查 Fail2Ban 是否在写日志。"
     press_any
     return
   fi
-  info "开始 tail -n 50 -F ${FAIL2BAN_LOG}（按 Ctrl+C 返回菜单）"
-  echo -e "${SEP}"
-  trap 'info "停止日志查看，返回菜单"; trap - INT; return 0' INT
+  log_info "开始 tail -n 50 -F ${FAIL2BAN_LOG}（按 Ctrl+C 返回菜单）"
+  printf "\n${SEP}\n"
+  trap 'log_info "停止日志查看，返回菜单"; trap - INT; return 0' INT
   tail -n 50 -F "${FAIL2BAN_LOG}" || true
   trap - INT
-  echo -e "${SEP}"
+  printf "\n${SEP}\n"
 }
 
 show_bans(){
-  echo -e "${SEP}"
+  printf "\n${SEP}\n"
   if ! systemctl is-active --quiet fail2ban; then
-    warn "fail2ban 未运行。"
-    echo -e "${SEP}"
+    log_warn "fail2ban 未运行。"
+    printf "\n${SEP}\n"
     return
   fi
 
@@ -249,7 +252,7 @@ show_bans(){
 
   declare -A BAN_MAP
   if [ -n "${BANS_RAW}" ]; then
-    info "当前封禁列表："
+    log_info "当前封禁列表："
     IFS=$'\n'
     i=1
     for line in ${BANS_RAW}; do
@@ -263,11 +266,11 @@ show_bans(){
   else
     BANS_LINE="$(fail2ban-client status ${JAIL} 2>/dev/null | sed -n 's/.*Banned IP list:\s*//p' || true)"
     if [ -z "${BANS_LINE}" ]; then
-      info "当前没有被封禁的 IP。"
-      echo -e "${SEP}"
+      log_info "当前没有被封禁的 IP。"
+      printf "\n${SEP}\n"
       return
     fi
-    info "当前封禁列表（不含时间）："
+    log_info "当前封禁列表（不含时间）："
     i=1
     for ip in ${BANS_LINE}; do
       printf " %2d) %-15s      Ban  N/A\n" "${i}" "${ip}"
@@ -279,117 +282,113 @@ show_bans(){
   echo
   read -r -p "输入序号解除封禁 (0 返回菜单): " UNBAN_CHOICE
   if [ "${UNBAN_CHOICE}" = "0" ]; then
-    echo -e "${SEP}"
+    printf "\n${SEP}\n"
     return
   elif [[ -n "${BAN_MAP[$UNBAN_CHOICE]:-}" ]]; then
     ip="${BAN_MAP[$UNBAN_CHOICE]}"
-    info "正在解除封禁 IP: ${ip}"
-    fail2ban-client set ${JAIL} unbanip "${ip}" || warn "解除封禁失败"
+    log_info "正在解除封禁 IP: ${ip}"
+    fail2ban-client set ${JAIL} unbanip "${ip}" || log_warn "解除封禁失败"
   else
-    warn "无效序号"
+    log_warn "无效序号"
   fi
-  echo -e "${SEP}"
+  printf "\n${SEP}\n"
 }
 
 uninstall_fail2ban(){
-  echo -e "${SEP}"
-  warn "你即将卸载 Fail2Ban 并清理配置与日志。此操作不可撤销。"
-  printf "确认卸载？请输入 ${YELLOW}[Y/n]${RESET} （默认 N，即取消）: "
+  printf "\n${SEP}\n"
+  log_warn "你即将卸载 Fail2Ban 并清理配置与日志。此操作不可撤销。"
+  printf "确认卸载？请输入 ${YELLOW}[Y/n]${NC} （默认 N，即取消）: "
   read -r CONF
   case "${CONF:-n}" in
     [Yy])
-      info "确认：开始卸载并清理..."
+      log_info "确认：开始卸载并清理..."
       systemctl stop fail2ban || true
       apt-get purge -y fail2ban || true
       apt-get autoremove -y || true
       apt-get autoclean -y || true
 
-      info "清理配置和日志"
+      log_info "清理配置和日志"
       rm -rf /etc/fail2ban
       rm -f "${FAIL2BAN_LOG}"
 
       if [ -f "${CLEAR_SCRIPT}" ]; then
         rm -f "${CLEAR_SCRIPT}"
-        info "已删除 ${CLEAR_SCRIPT}"
+        log_info "已删除 ${CLEAR_SCRIPT}"
       fi
 
-      # 从 crontab 中移除定时任务（尝试使用 crontab 命令，否则尝试直接编辑 crontab 文件）
       if command -v crontab >/dev/null 2>&1; then
         OLD_CRON="$(crontab -l 2>/dev/null || true)"
         if [ -n "${OLD_CRON}" ]; then
           NEW_CRON="$(printf "%s\n" "${OLD_CRON}" | awk -v m="${CRON_MARK}" -v l="${CRON_LINE}" '$0!=m && $0!=l')"
           printf "%s\n" "${NEW_CRON}" | crontab - 2>/dev/null || true
-          info "已从 crontab 中移除定时清理任务（如存在）"
+          log_info "已从 crontab 中移除定时清理任务（如存在）"
         fi
       else
-        # Debian/Ubuntu 的 crontab 文件可能位于 /var/spool/cron/crontabs/root
         CRON_FILE="/var/spool/cron/crontabs/root"
         if [ -f "${CRON_FILE}" ]; then
           OLD_CRON="$(cat "${CRON_FILE}")" || true
           NEW_CRON="$(printf "%s\n" "${OLD_CRON}" | awk -v m="${CRON_MARK}" -v l="${CRON_LINE}" '$0!=m && $0!=l')"
           printf "%s\n" "${NEW_CRON}" > "${CRON_FILE}" || true
-          info "已修改 ${CRON_FILE}，移除定时任务（如存在）"
+          log_info "已修改 ${CRON_FILE}，移除定时任务（如存在）"
         fi
       fi
 
       systemctl daemon-reload || true
 
-      # 询问是否同时卸载 UFW
-      printf "是否同时卸载 UFW？请输入 ${YELLOW}[y/N]${RESET} （默认 N）: "
+      printf "是否同时卸载 UFW？请输入 ${YELLOW}[y/N]${NC} （默认 N）: "
       read -r UNINSTALL_UFW
       case "${UNINSTALL_UFW:-n}" in
         [Yy]*)
-          info "开始卸载并重置 UFW..."
-          # 重置 UFW 规则并停止服务（若 ufw 可用）
+          log_info "开始卸载并重置 UFW..."
           if command -v ufw >/dev/null 2>&1; then
-            ufw --force reset || warn "ufw reset 返回非零（若 ufw 未启用这可能是正常的）"
+            ufw --force reset || log_warn "ufw reset 返回非零（若 ufw 未启用这可能是正常的）"
           fi
           systemctl stop ufw || true
           systemctl disable ufw || true
           apt-get purge -y ufw || true
           apt-get autoremove -y || true
           apt-get autoclean -y || true
-          info "UFW 已卸载并尝试清理规则。"
+          log_info "UFW 已卸载并尝试清理规则。"
           ;;
         *)
-          info "保留 UFW（未卸载）。"
+          log_info "保留 UFW（未卸载）。"
           ;;
       esac
 
-      info "卸载并清理完成。"
+      log_info "卸载并清理完成。"
       ;;
     *)
-      info "已取消卸载操作。"
+      log_info "已取消卸载操作。"
       ;;
   esac
-  echo -e "${SEP}"
+  printf "\n${SEP}\n"
 }
 
 # 主循环
 while true; do
-  echo -e "${SEP}"
+  printf "\n${SEP}\n"
   show_install_status
-  echo -e "${SEP}\n"
+  printf "\n${SEP}\n"
 
-  printf "${CYAN}请选择操作：${RESET}\n"
-  printf " ${GREEN}1)${RESET} 安装并配置 Fail2Ban（并设置每15天清空日志）\n"
-  printf " ${GREEN}2)${RESET} 查看 fail2ban 服务状态\n"
-  printf " ${GREEN}3)${RESET} 查看 fail2ban 配置文件\n"
-  printf " ${GREEN}4)${RESET} 查看实时日志\n"
-  printf " ${GREEN}5)${RESET} 查看封禁情况并可解除封禁\n"
-  printf " ${GREEN}6)${RESET} 卸载 Fail2Ban（含配置与日志，需确认 Y/y 才卸载；会询问是否同时卸载 UFW）\n"
-  printf " ${GREEN}0)${RESET} 退出\n\n"
+  printf "${CYAN}请选择操作：${NC}\n"
+  printf " ${GREEN}1)${NC} 安装并配置 Fail2Ban（并设置每15天清空日志）\n"
+  printf " ${GREEN}2)${NC} 查看 fail2ban 服务状态\n"
+  printf " ${GREEN}3)${NC} 查看 fail2ban 配置文件\n"
+  printf " ${GREEN}4)${NC} 查看实时日志\n"
+  printf " ${GREEN}5)${NC} 查看封禁情况并可解除封禁\n"
+  printf " ${GREEN}6)${NC} 卸载 Fail2Ban（含配置与日志，需确认 Y/y 才卸载；会询问是否同时卸载 UFW）\n"
+  printf " ${GREEN}0)${NC} 退出\n\n"
 
-  read -r -p "$(printf "${YELLOW}输入选项 [0-6]: ${RESET}")" CHOICE
+  read -r -p "$(printf "${YELLOW}输入选项 [0-6]: ${NC}")" CHOICE
 
   case "${CHOICE}" in
-    1) echo -e "${SEP}"; install_fail2ban; press_any ;;
-    2) echo -e "${SEP}"; show_status; press_any ;;
-    3) echo -e "${SEP}"; show_config; press_any ;;
-    4) echo -e "${SEP}"; show_logs; press_any ;;
-    5) echo -e "${SEP}"; show_bans; press_any ;;
-    6) echo -e "${SEP}"; uninstall_fail2ban; press_any ;;
-    0) info "退出脚本"; exit 0 ;;
-    *) warn "无效选项，请重新选择"; press_any ;;
+    1) printf "\n${SEP}\n"; install_fail2ban; press_any ;;
+    2) printf "\n${SEP}\n"; show_status; press_any ;;
+    3) printf "\n${SEP}\n"; show_config; press_any ;;
+    4) printf "\n${SEP}\n"; show_logs; press_any ;;
+    5) printf "\n${SEP}\n"; show_bans; press_any ;;
+    6) printf "\n${SEP}\n"; uninstall_fail2ban; press_any ;;
+    0) log_info "退出脚本"; exit 0 ;;
+    *) log_warn "无效选项，请重新选择"; press_any ;;
   esac
 done
